@@ -39,6 +39,11 @@ export interface DateProfileGeneratorProps extends DateProfileOptions {
   calendarApi: CalendarImpl
 }
 
+export interface HiddenDateRange {
+  dateStart: string | Date
+  dateEnd: string | Date
+}
+
 export interface DateProfileOptions {
   slotMinTime: Duration
   slotMaxTime: Duration
@@ -47,6 +52,7 @@ export interface DateProfileOptions {
   dateAlignment?: string
   dateIncrement?: Duration
   hiddenDays?: number[]
+  hiddenDates?: HiddenDateRange[]
   weekends?: boolean
   validRangeInput?: DateRangeInput | ((this: CalendarImpl, nowDate: Date) => DateRangeInput)
   visibleRangeInput?: DateRangeInput | ((this: CalendarImpl, nowDate: Date) => DateRangeInput)
@@ -59,6 +65,7 @@ export type DateProfileGeneratorClass = {
 
 export class DateProfileGenerator { // only publicly used for isHiddenDay :(
   isHiddenDayHash: boolean[]
+  hiddenDateRanges: DateRange[] = []
 
   constructor(protected props: DateProfileGeneratorProps) {
     this.initHiddenDays()
@@ -405,6 +412,15 @@ export class DateProfileGenerator { // only publicly used for isHiddenDay :(
     }
 
     this.isHiddenDayHash = isHiddenDayHash
+
+    // Parse hidden date ranges
+    this.hiddenDateRanges = (this.props.hiddenDates || []).reduce<DateRange[]>((acc, input) => {
+      let range = parseRange({ start: input.dateStart, end: input.dateEnd }, this.props.dateEnv)
+      if (range && range.start !== null && range.end !== null) {
+        acc.push(range as DateRange)
+      }
+      return acc
+    }, [])
   }
 
   // Remove days from the beginning and end of the range that are computed as hidden.
@@ -431,9 +447,22 @@ export class DateProfileGenerator { // only publicly used for isHiddenDay :(
   // `day` is a day-of-week index (0-6), or a Date (used for UTC)
   isHiddenDay(day) {
     if (day instanceof Date) {
+      if (this.isInHiddenDateRange(day)) {
+        return true
+      }
       day = day.getUTCDay()
     }
     return this.isHiddenDayHash[day]
+  }
+
+  // Is the given DateMarker within any of the hiddenDates ranges?
+  isInHiddenDateRange(date: DateMarker): boolean {
+    for (let range of this.hiddenDateRanges) {
+      if (rangeContainsMarker(range, date)) {
+        return true
+      }
+    }
+    return false
   }
 
   // Incrementing the current day until it is no longer a hidden day, returning a copy.
@@ -443,7 +472,8 @@ export class DateProfileGenerator { // only publicly used for isHiddenDay :(
   // `inc` defaults to `1` (increment one day forward each time)
   skipHiddenDays(date: DateMarker, inc = 1, isExclusive = false) {
     while (
-      this.isHiddenDayHash[(date.getUTCDay() + (isExclusive ? inc : 0) + 7) % 7]
+      this.isHiddenDayHash[(date.getUTCDay() + (isExclusive ? inc : 0) + 7) % 7] ||
+      this.isInHiddenDateRange(date)
     ) {
       date = addDays(date, inc)
     }
